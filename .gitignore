@@ -1,0 +1,9 @@
+.vscode/
+.DS_Store
+.~lock.*#
+request_host_url.txt
+.venv/
+.ruff_cache/
+__pycache__/
+*.pyc
+whut-wlan.env
