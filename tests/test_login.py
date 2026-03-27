@@ -89,7 +89,7 @@ class LoginWifiHelpersTest(unittest.TestCase):
     def test_main_switches_wifi_before_login(self):
         with mock.patch("login.heading") as heading:
             with mock.patch("login.ensure_wifi_connected") as ensure_wifi_connected:
-                with mock.patch("login.login_request") as login_request:
+                with mock.patch("login.login_request", return_value=True) as login_request:
                     exit_code = login.main(["login.py", "20240001", "secret"])
 
         self.assertEqual(exit_code, 0)
@@ -105,7 +105,7 @@ class LoginWifiHelpersTest(unittest.TestCase):
         ):
             with mock.patch("login.heading"):
                 with mock.patch("login.ensure_wifi_connected"):
-                    with mock.patch("login.login_request") as login_request:
+                    with mock.patch("login.login_request", return_value=True) as login_request:
                         exit_code = login.main(["login.py"])
 
         self.assertEqual(exit_code, 0)
@@ -119,7 +119,7 @@ class LoginWifiHelpersTest(unittest.TestCase):
         ):
             with mock.patch("login.heading"):
                 with mock.patch("login.ensure_wifi_connected"):
-                    with mock.patch("login.login_request") as login_request:
+                    with mock.patch("login.login_request", return_value=True) as login_request:
                         exit_code = login.main(["login.py", "cli-user", "cli-pass"])
 
         self.assertEqual(exit_code, 0)
@@ -144,6 +144,28 @@ class LoginWifiHelpersTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         log_error.assert_called_once()
+
+
+    def test_login_request_posts_to_login_api(self):
+        response = mock.Mock()
+        response.text = '{"authCode":"ok"}'
+        response.apparent_encoding = "utf-8"
+
+        with mock.patch("login.is_net_ok", return_value=False):
+            with mock.patch("login.log_out"):
+                with mock.patch("login.get_nas_id", return_value="nas-1"):
+                    with mock.patch("login.get_csrf_token", return_value="csrf-token"):
+                        with mock.patch("login.get_user_ip", return_value="1.2.3.4"):
+                            with mock.patch("login.get_host_ip", return_value="5.6.7.8"):
+                                with mock.patch.object(login.session, "post", return_value=response) as post:
+                                    result = login.login_request("20240001", "secret")
+
+        self.assertTrue(result)
+        post.assert_called_once()
+        self.assertEqual(post.call_args.args[0], login.LOGIN_API_URL)
+        self.assertEqual(post.call_args.kwargs["data"]["username"], "20240001")
+        self.assertEqual(post.call_args.kwargs["data"]["password"], "secret")
+        self.assertEqual(post.call_args.kwargs["data"]["nasId"], "nas-1")
 
 
 if __name__ == "__main__":

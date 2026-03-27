@@ -32,9 +32,9 @@ class InstallAutostartHelpersTest(unittest.TestCase):
             login_script="/tmp/WHUT-WLAN-main/login.py",
         )
 
-        self.assertIn('WorkingDirectory="/tmp/WHUT-WLAN-main"\n', content)
+        self.assertIn('WorkingDirectory=/tmp/WHUT-WLAN-main\n', content)
         self.assertIn(
-            'EnvironmentFile="/tmp/WHUT-WLAN-main/whut-wlan.env"\n',
+            'EnvironmentFile=/tmp/WHUT-WLAN-main/whut-wlan.env\n',
             content,
         )
         self.assertIn(
@@ -50,8 +50,8 @@ class InstallAutostartHelpersTest(unittest.TestCase):
             login_script="/tmp/My Project/login.py",
         )
 
-        self.assertIn('WorkingDirectory="/tmp/My Project"\n', content)
-        self.assertIn('EnvironmentFile="/tmp/My Project/whut-wlan.env"\n', content)
+        self.assertIn('WorkingDirectory=/tmp/My\\x20Project\n', content)
+        self.assertIn('EnvironmentFile=/tmp/My\\x20Project/whut-wlan.env\n', content)
         self.assertIn(
             'ExecStart="/tmp/My Project/.venv/bin/python" "/tmp/My Project/login.py"\n',
             content,

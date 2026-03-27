@@ -18,7 +18,7 @@ def encode_env_value(value):
     return escaped
 
 
-def quote_systemd_value(value):
+def escape_systemd_exec_arg(value):
     escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
 
@@ -28,6 +28,15 @@ def build_env_file_content(username, password):
         f"WHUT_USERNAME={encode_env_value(username)}\n"
         f"WHUT_PASSWORD={encode_env_value(password)}\n"
     )
+
+
+def quote_systemd_unit_value(value):
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def normalize_systemd_path(value):
+    return str(value).replace("\\", "\\\\").replace(" ", "\\x20")
 
 
 def build_service_file_content(python_path, project_dir, env_path, login_script):
@@ -47,10 +56,10 @@ RestartSec=10
 [Install]
 WantedBy=default.target
 """.format(
-        project_dir=quote_systemd_value(project_dir),
-        env_path=quote_systemd_value(env_path),
-        python_path=quote_systemd_value(python_path),
-        login_script=quote_systemd_value(login_script),
+    project_dir=normalize_systemd_path(project_dir),
+    env_path=normalize_systemd_path(env_path),
+    python_path=escape_systemd_exec_arg(python_path),
+    login_script=escape_systemd_exec_arg(login_script),
     )
 
 

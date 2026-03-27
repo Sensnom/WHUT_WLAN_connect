@@ -13,10 +13,10 @@ from urllib.parse import urlparse, parse_qs
 
 BLUE, END = "\033[1;36m", "\033[0m"
 
-requesr_url = ""
 TARGET_WIFI_SSID = "WHUT-WLAN"
 WIFI_CONNECT_RETRY_DELAY_SECONDS = 3
 WIFI_CONNECT_MAX_ATTEMPTS = 3
+LOGIN_API_URL = "http://172.30.21.100/api/authentication/login"
 
 logging.basicConfig(
     level=logging.INFO, format="%(levelname)s: %(asctime)s ====> %(message)s"
@@ -116,7 +116,7 @@ def login_request(username, password) -> bool:
         log_out()
         logging.info("your computer is offline，request now...")
         nasId = get_nas_id()
-        logging.info("nasId: " + str(nasId))
+        logging.info("nasId: %s", nasId)
         csrf_token = get_csrf_token()
         data = {"username": username, "password": password, "nasId": nasId}
         headers = {
@@ -129,24 +129,24 @@ def login_request(username, password) -> bool:
             "x-requested-with": "XMLHttpRequest",
             "x-csrf-token": csrf_token,
         }
-        try:
-            response = session.post(requesr_url, data=data, headers=headers)
-            response.encoding = response.apparent_encoding
+        response = session.post(LOGIN_API_URL, data=data, headers=headers, timeout=15)
+        response.encoding = response.apparent_encoding
 
-            if '"authCode":"ok' in response.text:
-                logging.info("login successfully")
-                user_ip = get_user_ip(response.text)
-                host_ip = get_host_ip()
-                logging.info("your user ip: " + user_ip)
-                logging.info("your host ip: " + host_ip)
-            else:
-                logging.error(response.text)
-        except Exception:
-            logging.exception("requsest error")
-    else:
-        logging.info("your computer is online  ")
-        host_ip = get_host_ip()
-        logging.info("your host ip: " + host_ip)
+        if '"authCode":"ok' in response.text:
+            logging.info("login successfully")
+            user_ip = get_user_ip(response.text)
+            host_ip = get_host_ip()
+            logging.info("your user ip: %s", user_ip)
+            logging.info("your host ip: %s", host_ip)
+            return True
+
+        logging.error("login failed: %s", response.text)
+        return False
+
+    logging.info("your computer is online")
+    host_ip = get_host_ip()
+    logging.info("your host ip: %s", host_ip)
+    return True
 
 
 def is_net_ok() -> bool:
