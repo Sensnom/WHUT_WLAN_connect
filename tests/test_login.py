@@ -86,10 +86,148 @@ class LoginWifiHelpersTest(unittest.TestCase):
         self.assertEqual(connect_wifi.call_count, 2)
         sleep.assert_any_call(3)
 
+    def test_parse_json_response_returns_none_for_non_json(self):
+        response = mock.Mock()
+        response.json.side_effect = ValueError("bad json")
+        self.assertIsNone(login.parse_json_response(response))
+
+    def test_extract_login_result_success_from_json(self):
+        response = mock.Mock()
+        response.apparent_encoding = "utf-8"
+        response.text = '{"authCode":"ok","message":"认证成功"}'
+        response.json.return_value = {"authCode": "ok", "message": "认证成功"}
+
+        result = login.extract_login_result(response)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["auth_code"], "ok")
+        self.assertEqual(result["message"], "认证成功")
+
+    def test_extract_login_result_failure_from_json(self):
+        response = mock.Mock()
+        response.apparent_encoding = "utf-8"
+        response.text = '{"authCode":"bad","message":"密码错误"}'
+        response.json.return_value = {"authCode": "bad", "message": "密码错误"}
+
+        result = login.extract_login_result(response)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["auth_code"], "bad")
+        self.assertEqual(result["message"], "密码错误")
+
+    def test_get_nas_id_raises_when_missing(self):
+        response = mock.Mock()
+        response.url = "http://example.com/no-nasid"
+        with mock.patch.object(login.session, "get", return_value=response):
+            with self.assertRaises(login.LoginError):
+                login.get_nas_id()
+
+    def test_get_csrf_token_raises_when_missing(self):
+        response = mock.Mock()
+        response.text = "{}"
+        response.json.return_value = {}
+        with mock.patch.object(login.session, "get", return_value=response):
+            with self.assertRaises(login.LoginError):
+                login.get_csrf_token()
+
+    def test_login_request_returns_already_online(self):
+        with mock.patch(
+            "login.check_network_status",
+            return_value={"online": True, "status_code": 200, "url": "https://www.baidu.com"},
+        ):
+            with mock.patch("login.get_host_ip", return_value="5.6.7.8"):
+                result = login.login_request("20240001", "secret")
+
+        self.assertEqual(result["status"], "already_online")
+        self.assertEqual(result["host_ip"], "5.6.7.8")
+
+    def test_login_request_returns_login_success(self):
+        response = mock.Mock()
+        response.text = '{"authCode":"ok","message":"认证成功","UserIpv4":"1.2.3.4"}'
+        response.apparent_encoding = "utf-8"
+        response.json.return_value = {
+            "authCode": "ok",
+            "message": "认证成功",
+            "UserIpv4": "1.2.3.4",
+        }
+
+        with mock.patch(
+            "login.check_network_status",
+            side_effect=[
+                {"online": False, "status_code": 302, "url": "http://portal", "error": None},
+                {"online": True, "status_code": 200, "url": "https://www.baidu.com"},
+            ],
+        ):
+            with mock.patch("login.log_out"):
+                with mock.patch("login.get_nas_id", return_value="nas-1"):
+                    with mock.patch("login.get_csrf_token", return_value="csrf-token"):
+                        with mock.patch("login.get_host_ip", return_value="5.6.7.8"):
+                            with mock.patch.object(
+                                login.session, "post", return_value=response
+                            ) as post:
+                                result = login.login_request("20240001", "secret")
+
+        self.assertEqual(result["status"], "login_success")
+        self.assertEqual(result["auth_code"], "ok")
+        self.assertEqual(result["nas_id"], "nas-1")
+        self.assertEqual(result["user_ip"], "1.2.3.4")
+        post.assert_called_once()
+        self.assertEqual(post.call_args.args[0], login.LOGIN_API_URL)
+
+    def test_login_request_returns_login_failed(self):
+        response = mock.Mock()
+        response.text = '{"authCode":"bad","message":"密码错误"}'
+        response.apparent_encoding = "utf-8"
+        response.json.return_value = {"authCode": "bad", "message": "密码错误"}
+
+        with mock.patch(
+            "login.check_network_status",
+            return_value={"online": False, "status_code": 302, "url": "http://portal", "error": None},
+        ):
+            with mock.patch("login.log_out"):
+                with mock.patch("login.get_nas_id", return_value="nas-1"):
+                    with mock.patch("login.get_csrf_token", return_value="csrf-token"):
+                        with mock.patch.object(login.session, "post", return_value=response):
+                            result = login.login_request("20240001", "secret")
+
+        self.assertEqual(result["status"], "login_failed")
+        self.assertEqual(result["auth_code"], "bad")
+        self.assertEqual(result["message"], "密码错误")
+
+    def test_login_request_returns_login_uncertain(self):
+        response = mock.Mock()
+        response.text = '{"authCode":"ok","message":"认证成功","UserIpv4":"1.2.3.4"}'
+        response.apparent_encoding = "utf-8"
+        response.json.return_value = {
+            "authCode": "ok",
+            "message": "认证成功",
+            "UserIpv4": "1.2.3.4",
+        }
+
+        with mock.patch(
+            "login.check_network_status",
+            side_effect=[
+                {"online": False, "status_code": 302, "url": "http://portal", "error": None},
+                {"online": False, "status_code": 302, "url": "http://portal", "error": None},
+            ],
+        ):
+            with mock.patch("login.log_out"):
+                with mock.patch("login.get_nas_id", return_value="nas-1"):
+                    with mock.patch("login.get_csrf_token", return_value="csrf-token"):
+                        with mock.patch("login.get_host_ip", return_value="5.6.7.8"):
+                            with mock.patch.object(login.session, "post", return_value=response):
+                                result = login.login_request("20240001", "secret")
+
+        self.assertEqual(result["status"], "login_uncertain")
+        self.assertEqual(result["auth_code"], "ok")
+
     def test_main_switches_wifi_before_login(self):
         with mock.patch("login.heading") as heading:
             with mock.patch("login.ensure_wifi_connected") as ensure_wifi_connected:
-                with mock.patch("login.login_request", return_value=True) as login_request:
+                with mock.patch(
+                    "login.login_request",
+                    return_value={"status": "already_online", "message": "ok"},
+                ) as login_request:
                     exit_code = login.main(["login.py", "20240001", "secret"])
 
         self.assertEqual(exit_code, 0)
@@ -105,7 +243,10 @@ class LoginWifiHelpersTest(unittest.TestCase):
         ):
             with mock.patch("login.heading"):
                 with mock.patch("login.ensure_wifi_connected"):
-                    with mock.patch("login.login_request", return_value=True) as login_request:
+                    with mock.patch(
+                        "login.login_request",
+                        return_value={"status": "already_online", "message": "ok"},
+                    ) as login_request:
                         exit_code = login.main(["login.py"])
 
         self.assertEqual(exit_code, 0)
@@ -119,7 +260,10 @@ class LoginWifiHelpersTest(unittest.TestCase):
         ):
             with mock.patch("login.heading"):
                 with mock.patch("login.ensure_wifi_connected"):
-                    with mock.patch("login.login_request", return_value=True) as login_request:
+                    with mock.patch(
+                        "login.login_request",
+                        return_value={"status": "already_online", "message": "ok"},
+                    ) as login_request:
                         exit_code = login.main(["login.py", "cli-user", "cli-pass"])
 
         self.assertEqual(exit_code, 0)
@@ -145,27 +289,16 @@ class LoginWifiHelpersTest(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         log_error.assert_called_once()
 
+    def test_main_returns_2_on_login_failure(self):
+        with mock.patch("login.heading"):
+            with mock.patch("login.ensure_wifi_connected"):
+                with mock.patch(
+                    "login.login_request",
+                    return_value={"status": "login_failed", "message": "密码错误"},
+                ):
+                    exit_code = login.main(["login.py", "20240001", "secret"])
 
-    def test_login_request_posts_to_login_api(self):
-        response = mock.Mock()
-        response.text = '{"authCode":"ok"}'
-        response.apparent_encoding = "utf-8"
-
-        with mock.patch("login.is_net_ok", return_value=False):
-            with mock.patch("login.log_out"):
-                with mock.patch("login.get_nas_id", return_value="nas-1"):
-                    with mock.patch("login.get_csrf_token", return_value="csrf-token"):
-                        with mock.patch("login.get_user_ip", return_value="1.2.3.4"):
-                            with mock.patch("login.get_host_ip", return_value="5.6.7.8"):
-                                with mock.patch.object(login.session, "post", return_value=response) as post:
-                                    result = login.login_request("20240001", "secret")
-
-        self.assertTrue(result)
-        post.assert_called_once()
-        self.assertEqual(post.call_args.args[0], login.LOGIN_API_URL)
-        self.assertEqual(post.call_args.kwargs["data"]["username"], "20240001")
-        self.assertEqual(post.call_args.kwargs["data"]["password"], "secret")
-        self.assertEqual(post.call_args.kwargs["data"]["nasId"], "nas-1")
+        self.assertEqual(exit_code, 2)
 
 
 if __name__ == "__main__":
