@@ -32,6 +32,7 @@ class InstallAutostartHelpersTest(unittest.TestCase):
             login_script="/tmp/WHUT-WLAN-main/login.py",
         )
 
+        self.assertIn("Type=oneshot\n", content)
         self.assertIn('WorkingDirectory=/tmp/WHUT-WLAN-main\n', content)
         self.assertIn(
             'EnvironmentFile=/tmp/WHUT-WLAN-main/whut-wlan.env\n',
@@ -57,7 +58,14 @@ class InstallAutostartHelpersTest(unittest.TestCase):
             content,
         )
 
-    def test_install_writes_env_and_service_files(self):
+    def test_build_timer_file_content_uses_defaults(self):
+        content = install_autostart.build_timer_file_content()
+        self.assertIn("OnBootSec=30s\n", content)
+        self.assertIn("OnUnitActiveSec=10min\n", content)
+        self.assertIn(f"Unit={install_autostart.SERVICE_NAME}\n", content)
+        self.assertIn("Persistent=true\n", content)
+
+    def test_install_writes_env_service_and_timer_files(self):
         with TemporaryDirectory() as tmp_dir:
             project_dir = Path(tmp_dir) / "project"
             project_dir.mkdir()
@@ -69,6 +77,7 @@ class InstallAutostartHelpersTest(unittest.TestCase):
                     "project_dir": project_dir,
                     "env_path": project_dir / install_autostart.ENV_FILE_NAME,
                     "service_path": user_systemd_dir / install_autostart.SERVICE_NAME,
+                    "timer_path": user_systemd_dir / install_autostart.TIMER_NAME,
                     "login_script": project_dir / "login.py",
                     "python_path": Path("/usr/bin/python3"),
                 },
@@ -83,6 +92,9 @@ class InstallAutostartHelpersTest(unittest.TestCase):
             self.assertTrue(
                 (user_systemd_dir / install_autostart.SERVICE_NAME).exists()
             )
+            self.assertTrue(
+                (user_systemd_dir / install_autostart.TIMER_NAME).exists()
+            )
 
     def test_install_runs_systemctl_user_commands(self):
         with TemporaryDirectory() as tmp_dir:
@@ -96,6 +108,7 @@ class InstallAutostartHelpersTest(unittest.TestCase):
                     "project_dir": project_dir,
                     "env_path": project_dir / install_autostart.ENV_FILE_NAME,
                     "service_path": user_systemd_dir / install_autostart.SERVICE_NAME,
+                    "timer_path": user_systemd_dir / install_autostart.TIMER_NAME,
                     "login_script": project_dir / "login.py",
                     "python_path": project_dir / ".venv/bin/python",
                 },
@@ -112,7 +125,9 @@ class InstallAutostartHelpersTest(unittest.TestCase):
             run_command.call_args_list,
             [
                 mock.call(["daemon-reload"]),
-                mock.call(["enable", "--now", install_autostart.SERVICE_NAME]),
+                mock.call(["disable", "--now", install_autostart.SERVICE_NAME]),
+                mock.call(["enable", "--now", install_autostart.TIMER_NAME]),
+                mock.call(["start", install_autostart.SERVICE_NAME]),
             ],
         )
 
@@ -127,6 +142,7 @@ class InstallAutostartHelpersTest(unittest.TestCase):
                 paths = install_autostart.get_runtime_paths()
 
         self.assertEqual(paths["python_path"], project_dir / ".venv/bin/python")
+        self.assertEqual(paths["timer_path"].name, install_autostart.TIMER_NAME)
 
     def test_install_autostart_raises_when_project_venv_missing(self):
         with TemporaryDirectory() as tmp_dir:
@@ -140,6 +156,7 @@ class InstallAutostartHelpersTest(unittest.TestCase):
                     "project_dir": project_dir,
                     "env_path": project_dir / install_autostart.ENV_FILE_NAME,
                     "service_path": user_systemd_dir / install_autostart.SERVICE_NAME,
+                    "timer_path": user_systemd_dir / install_autostart.TIMER_NAME,
                     "login_script": project_dir / "login.py",
                     "python_path": project_dir / ".venv/bin/python",
                 },
@@ -163,7 +180,7 @@ class InstallAutostartHelpersTest(unittest.TestCase):
 
             self.assertEqual(env_path.stat().st_mode & 0o777, 0o600)
 
-    def test_uninstall_removes_service_and_reloads_systemd(self):
+    def test_uninstall_removes_units_and_reloads_systemd(self):
         with TemporaryDirectory() as tmp_dir:
             project_dir = Path(tmp_dir) / "project"
             project_dir.mkdir()
@@ -172,8 +189,12 @@ class InstallAutostartHelpersTest(unittest.TestCase):
             service_path = (
                 Path(tmp_dir) / "user-systemd" / install_autostart.SERVICE_NAME
             )
+            timer_path = (
+                Path(tmp_dir) / "user-systemd" / install_autostart.TIMER_NAME
+            )
             service_path.parent.mkdir(parents=True)
             service_path.write_text("unit", encoding="utf-8")
+            timer_path.write_text("timer", encoding="utf-8")
 
             with mock.patch(
                 "install_autostart.get_runtime_paths",
@@ -181,6 +202,7 @@ class InstallAutostartHelpersTest(unittest.TestCase):
                     "project_dir": project_dir,
                     "env_path": env_path,
                     "service_path": service_path,
+                    "timer_path": timer_path,
                     "login_script": project_dir / "login.py",
                     "python_path": project_dir / ".venv/bin/python",
                 },
@@ -191,9 +213,11 @@ class InstallAutostartHelpersTest(unittest.TestCase):
                     install_autostart.uninstall_autostart()
 
         self.assertFalse(service_path.exists())
+        self.assertFalse(timer_path.exists())
         self.assertEqual(
             run_command.call_args_list,
             [
+                mock.call(["disable", "--now", install_autostart.TIMER_NAME]),
                 mock.call(["disable", "--now", install_autostart.SERVICE_NAME]),
                 mock.call(["daemon-reload"]),
             ],
@@ -208,6 +232,9 @@ class InstallAutostartHelpersTest(unittest.TestCase):
             service_path = (
                 Path(tmp_dir) / "user-systemd" / install_autostart.SERVICE_NAME
             )
+            timer_path = (
+                Path(tmp_dir) / "user-systemd" / install_autostart.TIMER_NAME
+            )
 
             with mock.patch(
                 "install_autostart.get_runtime_paths",
@@ -215,24 +242,19 @@ class InstallAutostartHelpersTest(unittest.TestCase):
                     "project_dir": project_dir,
                     "env_path": env_path,
                     "service_path": service_path,
+                    "timer_path": timer_path,
                     "login_script": project_dir / "login.py",
                     "python_path": project_dir / ".venv/bin/python",
                 },
             ):
                 with mock.patch(
                     "install_autostart.run_systemctl_user_command"
-                ) as run_command:
+                ):
                     install_autostart.uninstall_autostart()
 
             self.assertTrue(env_path.exists())
-            run_command.assert_has_calls(
-                [
-                    mock.call(["disable", "--now", install_autostart.SERVICE_NAME]),
-                    mock.call(["daemon-reload"]),
-                ]
-            )
 
-    def test_uninstall_ignores_missing_service_on_disable(self):
+    def test_uninstall_ignores_missing_service_and_timer_on_disable(self):
         with TemporaryDirectory() as tmp_dir:
             project_dir = Path(tmp_dir) / "project"
             project_dir.mkdir()
@@ -241,6 +263,9 @@ class InstallAutostartHelpersTest(unittest.TestCase):
             service_path = (
                 Path(tmp_dir) / "user-systemd" / install_autostart.SERVICE_NAME
             )
+            timer_path = (
+                Path(tmp_dir) / "user-systemd" / install_autostart.TIMER_NAME
+            )
 
             with mock.patch(
                 "install_autostart.get_runtime_paths",
@@ -248,6 +273,7 @@ class InstallAutostartHelpersTest(unittest.TestCase):
                     "project_dir": project_dir,
                     "env_path": env_path,
                     "service_path": service_path,
+                    "timer_path": timer_path,
                     "login_script": project_dir / "login.py",
                     "python_path": project_dir / ".venv/bin/python",
                 },
@@ -255,6 +281,7 @@ class InstallAutostartHelpersTest(unittest.TestCase):
                 with mock.patch(
                     "install_autostart.run_systemctl_user_command",
                     side_effect=[
+                        RuntimeError("Unit whut-wlan.timer not loaded."),
                         RuntimeError("Unit whut-wlan.service not loaded."),
                         None,
                     ],
@@ -263,6 +290,7 @@ class InstallAutostartHelpersTest(unittest.TestCase):
 
             run_command.assert_has_calls(
                 [
+                    mock.call(["disable", "--now", install_autostart.TIMER_NAME]),
                     mock.call(["disable", "--now", install_autostart.SERVICE_NAME]),
                     mock.call(["daemon-reload"]),
                 ]
